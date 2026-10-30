@@ -13,6 +13,7 @@ from auditor import EXAMPLE_TX, validate_input
 from payments import (PaymentService, PaymentStore, Facilitators, b64, challenge, requirements,
                       PAY_TO, NETWORK, canonical, parse_payment, RETENTION)
 from transport import RemoteError, RPC
+from tests.test_auditor import LOCATOR, SNAP, SnapshotRPC
 
 BASE='https://audit.example.test'
 PAYER='0x'+'11'*20
@@ -52,29 +53,38 @@ class MockFacilitator:
 
 class PaymentTests(unittest.TestCase):
     def setUp(self):
+        self.request=REQUEST
         self.tmp=tempfile.TemporaryDirectory();self.path=Path(self.tmp.name)/'payments.db'
         self.store=PaymentStore(self.path);self.fac=MockFacilitator();self.audit_calls=0
         def audit_fn(req):
             self.audit_calls+=1
-            return {'tx_hash':req['tx_hash'],'verdict':'matches','partial':False}
+            self.assertEqual(req,validate_input(self.request))
+            return {'tx_hash':EXAMPLE_TX,'verdict':'matches','partial':False}
         self.engine=audit_fn
         self.service=PaymentService(self.store,self.fac,BASE,audit_fn,FakeRPC)
         self.payload=payload();self.header=b64(self.payload)
     def tearDown(self):self.tmp.cleanup()
-    def call(self,body=None,header=None):return self.service.process(REQUEST if body is None else body, self.header if header is None else header)
+    def call(self,body=None,header=None):return self.service.process(self.request if body is None else body, self.header if header is None else header)
 
     def test_challenge_exact_contract(self):
-        status,obj,headers=self.service.process(REQUEST)
+        status,obj,headers=self.service.process(self.request)
         self.assertEqual(status,402)
         self.assertEqual(json.loads(base64.b64decode(headers['PAYMENT-REQUIRED'])),obj)
         self.assertEqual(obj['resource']['url'],BASE+'/v1/audit')
+        self.assertEqual(obj['resource']['description'],'Independent Base x402 settlement audit')
+        self.assertEqual(obj,challenge(BASE))
         self.assertEqual(obj['x402Version'],2)
         self.assertEqual(obj['accepts'][0],requirements())
         self.assertEqual((self.fac.verifies,self.fac.settles),(0,0))
 
     def test_invalid_input_precedes_all_payment_work(self):
-        for body in [{'tx_hash':'bad'},{'tx_hash':EXAMPLE_TX,'expected':{'amount':2}},None,[],{'tx_hash':EXAMPLE_TX,'expected':{'valid_at':False}}]:
-            self.assertEqual(self.service.process(body,self.header)[0],400)
+        for body in [{'tx_hash':'bad'},{'tx_hash':EXAMPLE_TX,'expected':{'amount':2}},None,[],
+                     {'tx_hash':EXAMPLE_TX,'expected':{'valid_at':False}}, {},
+                     {'tx_hash':EXAMPLE_TX,**LOCATOR}, {'block_number':0}, {'tx_index':0},
+                     {**LOCATOR,'block_number':True}, {**LOCATOR,'tx_index':-1},
+                     {**LOCATOR,'expected':{'amount':2}}]:
+            for header in (None,self.header,'malformed'):
+                self.assertEqual(self.service.process(body,header)[0],400)
         self.assertEqual((self.fac.verifies,self.fac.settles,self.audit_calls),(0,0,0))
         with self.store.connect() as db:self.assertEqual(db.execute('SELECT COUNT(*) FROM payments').fetchone()[0],0)
 
@@ -91,6 +101,7 @@ class PaymentTests(unittest.TestCase):
         self.assertEqual(self.call(header=alt),first)
         with self.store.connect() as db:
             row=dict(db.execute('SELECT * FROM payments').fetchone())
+            self.assertEqual(json.loads(row['body']),validate_input(self.request))
             self.assertNotIn(self.header,canonical(row));self.assertNotIn(self.payload['payload']['signature'],canonical(row))
 
     def test_reused_nonce_different_body_or_signature_is_conflict(self):
@@ -107,7 +118,7 @@ class PaymentTests(unittest.TestCase):
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
             first=pool.submit(self.call)
             self.assertTrue(self.fac.enter.wait(timeout=2))
-            second=service2.process(REQUEST,self.header)
+            second=service2.process(self.request,self.header)
             self.assertEqual(second[0],202);self.assertEqual(second[2]['Retry-After'],'15')
             self.fac.release.set();self.assertEqual(first.result(timeout=2)[0],200)
         self.assertEqual((self.fac.settles,self.audit_calls),(1,1))
@@ -133,6 +144,9 @@ class PaymentTests(unittest.TestCase):
         self.service.audit_fn=broken
         first=self.call();second=self.call()
         self.assertEqual(first[0],200);self.assertTrue(first[1]['partial']);self.assertIsNone(first[1]['verdict'])
+        self.assertEqual(first[1]['tx_hash'],self.request.get('tx_hash'))
+        if 'block_number' in self.request:
+            self.assertEqual(first[1]['locator'],{**LOCATOR,'rpc':None})
         self.assertIn('PAYMENT-RESPONSE',first[2]);self.assertEqual(first,second);self.assertEqual(self.fac.settles,1)
 
     def test_payment_rpc_failure_before_settlement_is_503(self):
@@ -187,8 +201,11 @@ class PaymentTests(unittest.TestCase):
                 if method=='eth_getLogs':return [{'transactionHash':TX}]
                 return super().call(method,params)
         result={'verdict':'matches','selected':{'event':{'nonce':nonce}}}
-        self.service.rpc_factory=RecoverRPC
-        with patch('payments.audit',return_value=result):recovered=self.call()
+        self.service=PaymentService(PaymentStore(self.path),self.fac,BASE,self.engine,RecoverRPC)
+        with patch('payments.audit',return_value=result) as fee_audit:recovered=self.call()
+        # Reconciliation audits the API fee by hash, even when the purchased audit uses block/index.
+        self.assertEqual(fee_audit.call_args.args[0], validate_input({'tx_hash':TX,
+                         'expected':{'pay_to':PAY_TO,'amount':'10000','payer':PAYER}}))
         self.assertEqual(recovered[0],200);self.assertEqual(self.fac.settles,1)
         self.assertEqual(json.loads(base64.b64decode(recovered[2]['PAYMENT-RESPONSE']))['transaction'],TX)
 
@@ -212,8 +229,51 @@ class PaymentTests(unittest.TestCase):
         self.service.audit_fn=lambda req:{'evidence':'x'*480001}
         result=self.call()
         self.assertEqual(result[0],200);self.assertTrue(result[1]['partial'])
+        if 'block_number' in self.request:
+            self.assertEqual(result[1]['locator'],{**LOCATOR,'rpc':None})
         self.assertIn('PAYMENT-RESPONSE',result[2])
         self.assertLess(len(canonical(result[1])),500000)
+
+
+class LocatorPaymentTests(PaymentTests):
+    def setUp(self):
+        super().setUp()
+        self.request=LOCATOR
+
+    def test_switching_locator_form_or_position_conflicts_without_resolving(self):
+        first=self.call();self.assertEqual(first[0],200)
+        for body in (REQUEST,{**LOCATOR,'tx_index':243},{**LOCATOR,'block_number':0}):
+            self.assertEqual(self.call(body)[0],409)
+        self.assertEqual((self.fac.settles,self.audit_calls),(1,1))
+
+    def test_crash_after_settlement_resumes_persisted_locator(self):
+        with patch.object(self.service,'finish',return_value=self.service.pending()):
+            self.assertEqual(self.call()[0],202)
+        key=parse_payment(self.header,BASE)[1]
+        self.assertEqual(self.store.get(key)['state'],'settled')
+        self.assertEqual(self.audit_calls,0)
+        self.service=PaymentService(PaymentStore(self.path),self.fac,BASE,self.engine,FakeRPC)
+        self.assertEqual(self.call()[0],200)
+        self.assertEqual((self.fac.settles,self.audit_calls),(1,1))
+
+    def test_paid_empty_position_returns_200_and_replays(self):
+        snap=copy.deepcopy(SNAP);snap['transaction']=None
+        from auditor import audit
+        self.service.audit_fn=lambda req:audit(req,SnapshotRPC(snap))
+        first=self.call()
+        self.assertEqual(first[0],200);self.assertEqual(first[1]['verdict'],'not_found')
+        self.assertIsNone(first[1]['tx_hash']);self.assertFalse(first[1]['partial'])
+        self.assertEqual(first[1]['locator'],{**LOCATOR,'rpc':'mock://snapshot'})
+        self.assertIn('PAYMENT-RESPONSE',first[2])
+        self.assertEqual(self.call(),first);self.assertEqual(self.fac.settles,1)
+
+    def test_oversized_resolved_audit_preserves_hash_and_locator(self):
+        locator={**LOCATOR,'rpc':'mock://snapshot'}
+        self.service.audit_fn=lambda req:{'tx_hash':EXAMPLE_TX,'locator':locator,'evidence':'x'*480001}
+        first=self.call()
+        self.assertEqual(first[0],200);self.assertTrue(first[1]['partial'])
+        self.assertEqual(first[1]['tx_hash'],EXAMPLE_TX);self.assertEqual(first[1]['locator'],locator)
+        self.assertEqual(self.call(),first);self.assertEqual(self.fac.settles,1)
 
 
 class FacilitatorTransportTests(unittest.TestCase):

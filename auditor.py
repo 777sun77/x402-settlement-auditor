@@ -11,11 +11,21 @@ EXAMPLE_TX = '0x389a08dba01e0d65999b775cd9724d73d82bd3908ae5666ae631ef87e4dfde99
 
 
 def validate_input(obj):
-    if not isinstance(obj, dict) or set(obj)-{'tx_hash', 'expected'}:
-        raise ValueError('body must contain tx_hash and optional expected only')
-    tx = obj.get('tx_hash')
-    if not isinstance(tx, str) or not re.fullmatch(r'0x[0-9a-fA-F]{64}', tx):
-        raise ValueError('tx_hash must be 0x followed by 64 hex digits')
+    if not isinstance(obj, dict) or set(obj)-{'tx_hash', 'block_number', 'tx_index', 'expected'}:
+        raise ValueError('body must contain tx_hash OR block_number and tx_index, plus optional expected only')
+    fields = set(obj)-{'expected'}
+    if fields == {'tx_hash'}:
+        tx = obj['tx_hash']
+        if not isinstance(tx, str) or not re.fullmatch(r'0x[0-9a-fA-F]{64}', tx):
+            raise ValueError('tx_hash must be 0x followed by 64 hex digits')
+        locator = {'tx_hash': tx.lower()}
+    elif fields == {'block_number', 'tx_index'}:
+        for k in ('block_number', 'tx_index'):
+            if type(obj[k]) is not int or obj[k] < 0:
+                raise ValueError(k+' must be a nonnegative integer')
+        locator = {k: obj[k] for k in ('block_number', 'tx_index')}
+    else:
+        raise ValueError('provide exactly one of tx_hash OR both block_number and tx_index')
     exp = obj.get('expected', {})
     if not isinstance(exp, dict) or set(exp)-{'pay_to', 'amount', 'asset', 'payer', 'valid_at'}:
         raise ValueError('expected has unknown fields or is not an object')
@@ -29,11 +39,19 @@ def validate_input(obj):
             raise ValueError('amount must be a canonical uint256 atomic-unit string')
     if 'valid_at' in exp and (type(exp['valid_at']) is not int or not 0 <= exp['valid_at'] < 2**64):
         raise ValueError('valid_at must be a nonnegative integer Unix second below 2^64')
-    return {'tx_hash': tx.lower(), 'expected': out}
+    return {**locator, 'expected': out}
+
+
+def request_identity(request):
+    identity = {'tx_hash': request.get('tx_hash')}
+    if 'block_number' in request:
+        identity['locator'] = {'block_number': request['block_number'],
+                               'tx_index': request['tx_index'], 'rpc': None}
+    return identity
 
 
 def partial_result(request, error):
-    return {'tx_hash': request['tx_hash'], 'network': 'eip155:8453', 'verdict': None,
+    return {**request_identity(request), 'network': 'eip155:8453', 'verdict': None,
             'partial': True, 'errors': [error], 'checks': unchecked_fields(request['expected']),
             'warning': 'Inconclusive. Recover with the identical input and payment header; do not pay again.'}
 
@@ -63,20 +81,37 @@ def check_fields(payment, call, exp):
 
 def audit(request, rpc=None):
     rpc = rpc or RPC()
-    result = {'tx_hash': request['tx_hash'], 'network': 'eip155:8453', 'partial': False,
+    result = {**request_identity(request), 'network': 'eip155:8453', 'partial': False,
               'verdict': None, 'expected': request['expected'], 'checks': unchecked_fields(request['expected']),
               'errors': [], 'warnings': [], 'rpc_reads': rpc.reads,
               'scope': 'On-chain EIP-3009 settlement evidence; off-chain x402 challenge provenance is not authenticated.'}
     try:
-        h = request['tx_hash']
-        tx = rpc.call('eth_getTransactionByHash', [h])
-        receipt = rpc.call('eth_getTransactionReceipt', [h])
         result['transaction'] = {'status': 'not_found', 'block_number': None, 'block_hash': None, 'timestamp': None}
+        if 'locator' in result:
+            tx = rpc.call('eth_getTransactionByBlockNumberAndIndex',
+                          [hex(request['block_number']), hex(request['tx_index'])])
+            result['locator']['rpc'] = rpc.reads[-1]['rpc']
+            if tx is None:
+                result['verdict'] = 'not_found'; return result
+            h = tx.get('hash')
+            if not isinstance(h, str) or not re.fullmatch(r'0x[0-9a-fA-F]{64}', h):
+                raise ValueError('RPC returned an invalid transaction hash')
+            h = result['tx_hash'] = h.lower()
+            if (int(tx['blockNumber'], 16) != request['block_number']
+                or int(tx['transactionIndex'], 16) != request['tx_index']):
+                raise ValueError('RPC transaction locator mismatch')
+        else:
+            h = request['tx_hash']
+            tx = rpc.call('eth_getTransactionByHash', [h])
+        receipt = rpc.call('eth_getTransactionReceipt', [h])
         if tx is None and receipt is None:
             result['verdict'] = 'not_found'; return result
         if not tx or not receipt or not receipt.get('blockNumber'):
             result['transaction']['status'] = 'pending'
             result['partial'] = True; result['errors'].append('transaction or receipt pending/unavailable'); return result
+        if 'locator' in result and (int(receipt['blockNumber'], 16) != request['block_number']
+                                   or int(receipt['transactionIndex'], 16) != request['tx_index']):
+            raise ValueError('RPC receipt locator mismatch')
         block = rpc.call('eth_getBlockByNumber', [receipt['blockNumber'], False])
         if (not block or tx.get('hash', '').lower() != h or receipt.get('transactionHash', '').lower() != h
             or tx.get('blockHash') != receipt.get('blockHash') or receipt.get('blockHash') != block.get('hash')

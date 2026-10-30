@@ -2,13 +2,16 @@ import copy
 import json
 import unittest
 from pathlib import Path
-from auditor import audit, validate_input, EXAMPLE_TX
+from unittest.mock import patch
+from auditor import audit, validate_input, partial_result, EXAMPLE_TX
+from transport import RPC, RemoteError
 from decoder import (decode_authorization, decode_suffix, find_calls, MARKER, USDC,
                      keccak_self_test, BYTES_AUTH_SELECTORS, AGGREGATE3)
 
 ROOT = Path(__file__).resolve().parents[1]
 SNAP = json.loads((ROOT/'data/example-snapshot.json').read_text())
 EXAMPLE = json.loads((ROOT/'data/example.json').read_text())
+LOCATOR = {'block_number': 53228028, 'tx_index': 242}
 
 
 def word(n): return n.to_bytes(32, 'big')
@@ -26,6 +29,7 @@ class SnapshotRPC:
         self.reads.append({'method':method,'params':params,'rpc':'mock://snapshot'})
         if method == 'eth_call': return '0x'+word(int(self.state)).hex()
         return {'eth_getTransactionByHash':self.snap['transaction'],
+                'eth_getTransactionByBlockNumberAndIndex':self.snap['transaction'],
                 'eth_getTransactionReceipt':self.snap['receipt'],
                 'eth_getBlockByNumber':self.snap['block']}[method]
 
@@ -137,7 +141,109 @@ class EngineTests(unittest.TestCase):
             with self.assertRaises(ValueError):validate_input(value)
 
 
+class LocatorTests(unittest.TestCase):
+    def test_valid_forms_and_normalization_without_rpc(self):
+        with patch('transport.http_json', side_effect=AssertionError('validation must be pure')):
+            self.assertEqual(validate_input({'tx_hash': '0x'+EXAMPLE_TX[2:].upper()}),
+                             {'tx_hash': EXAMPLE_TX, 'expected': {'asset': USDC}})
+            for locator in (LOCATOR, {'block_number': 0, 'tx_index': 0}):
+                self.assertEqual(validate_input(locator), {**locator, 'expected': {'asset': USDC}})
+            for locator in ({'tx_hash': EXAMPLE_TX}, LOCATOR):
+                req = validate_input({**locator, 'expected': EXAMPLE['example_request']['expected']})
+                self.assertEqual(req['expected'], validate_input(EXAMPLE['example_request'])['expected'])
+
+    def test_invalid_shapes_and_integer_types(self):
+        invalid = [None, [], 'tx', {}, {'expected': {}}, {'block_number': 0}, {'tx_index': 0},
+                   {'tx_hash': None}, {'tx_hash': EXAMPLE_TX, **LOCATOR},
+                   {'tx_hash': EXAMPLE_TX, 'block_number': 0},
+                   {'tx_hash': EXAMPLE_TX, 'tx_index': 0}, {**LOCATOR, 'unknown': 1}]
+        for field in LOCATOR:
+            invalid.extend({**LOCATOR, field: value} for value in (-1, True, False, 1.0, 0.5, '1', None, [], {}))
+        for locator in ({'tx_hash': EXAMPLE_TX}, LOCATOR):
+            invalid.extend({**locator, 'expected': value} for value in
+                           (None, [], {'foo': 1}, {'amount': 1}, {'valid_at': True}))
+        for value in invalid:
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                validate_input(value)
+
+    def test_resolution_runs_identical_audit_and_retains_source(self):
+        expected = EXAMPLE['example_request']['expected']
+        rpc = SnapshotRPC()
+        out = audit(validate_input({**LOCATOR, 'expected': expected}), rpc)
+        by_hash = audit(validate_input(EXAMPLE['example_request']), SnapshotRPC())
+        self.assertEqual(out['tx_hash'], EXAMPLE_TX)
+        self.assertEqual(out['locator'], {**LOCATOR, 'rpc': 'mock://snapshot'})
+        self.assertEqual(rpc.reads[0], {'method': 'eth_getTransactionByBlockNumberAndIndex',
+                         'params': ['0x32c31fc', '0xf2'], 'rpc': 'mock://snapshot'})
+        self.assertEqual(rpc.reads[1]['params'], [EXAMPLE_TX])
+        for field in set(by_hash)-{'rpc_reads'}:
+            self.assertEqual(out[field], by_hash[field], field)
+
+    def test_empty_position_is_not_found_without_receipt_reads(self):
+        snap = copy.deepcopy(SNAP); snap['transaction'] = None
+        rpc = SnapshotRPC(snap)
+        out = audit(validate_input(LOCATOR), rpc)
+        self.assertEqual(out['verdict'], 'not_found'); self.assertFalse(out['partial'])
+        self.assertIsNone(out['tx_hash']); self.assertEqual(len(rpc.reads), 1)
+        self.assertEqual(out['locator'], {**LOCATOR, 'rpc': 'mock://snapshot'})
+
+    def test_resolution_outage_and_post_resolution_outage_are_partial(self):
+        for failed_method in ('eth_getTransactionByBlockNumberAndIndex', 'eth_getTransactionReceipt'):
+            rpc = SnapshotRPC(); original = rpc.call
+            def call(method, params):
+                if method == failed_method: raise RemoteError('offline')
+                return original(method, params)
+            rpc.call = call
+            out = audit(validate_input(LOCATOR), rpc)
+            self.assertTrue(out['partial']); self.assertIsNone(out['verdict'])
+            resolved = failed_method == 'eth_getTransactionReceipt'
+            self.assertEqual(out['tx_hash'], EXAMPLE_TX if resolved else None)
+            self.assertEqual(out['locator']['rpc'], 'mock://snapshot' if resolved else None)
+        fallback = partial_result(validate_input(LOCATOR), 'engine unavailable')
+        self.assertIsNone(fallback['tx_hash']); self.assertEqual(fallback['locator'], {**LOCATOR, 'rpc': None})
+
+    def test_inconsistent_rpc_identity_is_partial(self):
+        for section, field, value in [('transaction', 'hash', 'invalid'),
+                                      ('transaction', 'blockNumber', '0x0'),
+                                      ('transaction', 'transactionIndex', '0x0'),
+                                      ('receipt', 'blockNumber', '0x0'),
+                                      ('receipt', 'transactionIndex', '0x0')]:
+            snap = copy.deepcopy(SNAP); snap[section][field] = value
+            with self.subTest(section=section, field=field):
+                out = audit(validate_input(LOCATOR), SnapshotRPC(snap))
+                self.assertTrue(out['partial']); self.assertIsNone(out['verdict'])
+
+    def test_resolution_uses_chain_checked_rpc_fallback(self):
+        calls = []
+        sources = ['https://offline.test', 'https://wrong-chain.test', 'https://base.test']
+        def remote(url, obj, timeout):
+            method = obj['method']; calls.append((url, method))
+            if url == sources[0]: raise RemoteError('offline')
+            if method == 'eth_chainId':
+                value = '0x1' if url == sources[1] else '0x2105'
+            else:
+                self.assertIn((url, 'eth_chainId'), calls)
+                value = SnapshotRPC().call(method, obj['params'])
+            return 200, {'jsonrpc': '2.0', 'id': 1, 'result': value}
+        with patch('transport.http_json', side_effect=remote), patch('transport.time.sleep'):
+            out = audit(validate_input(LOCATOR), RPC(sources))
+        self.assertEqual(out['verdict'], 'matches', out['errors'])
+        self.assertEqual(out['locator']['rpc'], sources[2])
+        self.assertEqual(calls.count((sources[1], 'eth_chainId')), 2*len(out['rpc_reads']))
+        self.assertNotIn((sources[1], 'eth_getTransactionByBlockNumberAndIndex'), calls)
+        self.assertEqual(calls.count((sources[2], 'eth_chainId')), 1)
+
+
 class LiveReadOnlyTests(unittest.TestCase):
+    def test_block_index_resolves_worked_example_on_public_base_rpc(self):
+        out = audit(validate_input({**LOCATOR, 'expected': EXAMPLE['example_request']['expected']}))
+        self.assertEqual(out['tx_hash'], EXAMPLE_TX, out['errors'])
+        self.assertEqual(out['verdict'], 'matches', out['errors'])
+        self.assertFalse(out['partial'])
+        self.assertEqual(out['locator'], {**LOCATOR, 'rpc': out['rpc_reads'][0]['rpc']})
+        self.assertEqual(out['rpc_reads'][0]['method'], 'eth_getTransactionByBlockNumberAndIndex')
+        self.assertTrue(out['locator']['rpc'].startswith('https://'))
+
     def test_worked_example_on_public_base_rpc(self):
         # Only eth_chainId/getTransaction/getReceipt/getBlock/eth_call. No signing or settle.
         out=audit(EXAMPLE['example_request'])

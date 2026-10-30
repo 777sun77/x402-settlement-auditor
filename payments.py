@@ -196,7 +196,8 @@ class PaymentService:
                     row = self.store.get(key)
                     if row['state'] == 'settling': return self.pending()
                     if row['state'] == 'failed': return self.required(row['error'])
-                return self.finish(key, request)
+                # Resume the normalized input committed before settlement, in either locator form.
+                return self.finish(key, json.loads(row['body']))
             now = int(time.time()); a = payload['payload']['authorization']
             if not int(a['validAfter']) < now < int(a['validBefore']) or int(a['validBefore']) > now+300:
                 return self.required('authorization_expired_or_outside_300_second_timeout')
@@ -238,7 +239,8 @@ class PaymentService:
         try: result = self.audit_fn(request)
         except Exception: result = partial_result(request, 'audit engine unavailable after payment')
         if len(canonical(result).encode()) > 480000:
-            result = partial_result(request, 'audit evidence exceeds the 480000-byte output limit')
+            identity = {k: result[k] for k in ('tx_hash', 'locator') if k in result}
+            result = {**partial_result(request, 'audit evidence exceeds the 480000-byte output limit'), **identity}
         self.store.update(key, state='done', result=canonical(result), completed=time.time())
         return self.delivered(self.store.get(key))
 
@@ -266,6 +268,7 @@ class PaymentService:
             # failure could advance the cursor past the only matching event.
             self.store.update(key, settlement=canonical({'transaction': hashes[0]}))
         for h in dict.fromkeys(hashes):
+            # This hash identifies the API fee, independently of the stored audit locator.
             req = validate_input({'tx_hash': h, 'expected': {'pay_to': PAY_TO, 'amount': PRICE, 'payer': a['from']}})
             result = audit(req, rpc)
             if result.get('verdict') == 'matches' and result['selected']['event']['nonce'].lower() == a['nonce'].lower():

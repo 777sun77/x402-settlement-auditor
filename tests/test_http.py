@@ -7,7 +7,8 @@ import threading
 import unittest
 from pathlib import Path
 from payments import PaymentStore,PaymentService,b64
-from server import Server,ROOT
+from server import Server,ROOT,VERSION
+from tests.test_auditor import LOCATOR
 from tests.test_payments import MockFacilitator,FakeRPC,payload,BASE,REQUEST
 
 
@@ -32,8 +33,27 @@ class HTTPTests(unittest.TestCase):
             status,h,raw=self.send('GET',path)
             self.assertEqual(status,200,path);self.assertTrue(raw)
         status,h,raw=self.send('GET','/health');obj=json.loads(raw)
+        self.assertEqual(obj['version'],'1.1.0');self.assertEqual(VERSION,'1.1.0')
         self.assertEqual(obj['server_sha256'],hashlib.sha256((ROOT/'server.py').read_bytes()).hexdigest())
         status,h,raw=self.send('GET','/example');self.assertEqual(json.loads(raw)['verdict'],'matches')
+    def test_guide_documents_both_forms_and_locator_example(self):
+        status,h,raw=self.send('GET','/guide');text=raw.decode()
+        self.assertEqual(status,200)
+        for part in ('exactly one','block_number','tx_index','53228028','242',
+                     'eth_getTransactionByBlockNumberAndIndex','locator','Worked example 2'):
+            self.assertIn(part,text)
+    def test_locator_challenge_is_identical_and_bad_shapes_are_400(self):
+        headers={'Content-Type':'application/json'}
+        by_hash=self.send('POST','/v1/audit',json.dumps(REQUEST),headers)
+        by_locator=self.send('POST','/v1/audit',json.dumps(LOCATOR),headers)
+        self.assertEqual(by_locator[0],402);self.assertEqual(by_locator[2],by_hash[2])
+        self.assertEqual(by_locator[1]['PAYMENT-REQUIRED'],by_hash[1]['PAYMENT-REQUIRED'])
+        before=(self.fac.verifies,self.fac.settles)
+        for body in ({},{'block_number':0},{'tx_index':0},{**LOCATOR,'tx_index':False},
+                     {**REQUEST,**LOCATOR}):
+            self.assertEqual(self.send('POST','/v1/audit',json.dumps(body),
+                {**headers,'PAYMENT-SIGNATURE':b64(payload())})[0],400)
+        self.assertEqual((self.fac.verifies,self.fac.settles),before)
     def test_unpaid_challenge_and_invalid_input_without_charge(self):
         before=self.fac.settles
         status,h,raw=self.send('POST','/v1/audit',json.dumps(REQUEST),{'Content-Type':'application/json'})
