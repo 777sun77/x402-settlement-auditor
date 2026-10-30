@@ -1,0 +1,273 @@
+{
+  "tx_hash": "0x389a08dba01e0d65999b775cd9724d73d82bd3908ae5666ae631ef87e4dfde99",
+  "network": "eip155:8453",
+  "partial": false,
+  "verdict": "matches",
+  "expected": {
+    "pay_to": "0x788b4ca11950879550353d8ae82d1c0af6018454",
+    "payer": "0xd5f3a78ab272eb36a997f4aa249b876bdb9692e3",
+    "amount": "10000",
+    "valid_at": 1793245403,
+    "asset": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"
+  },
+  "checks": {
+    "pay_to": {
+      "status": "pass",
+      "expected": "0x788b4ca11950879550353d8ae82d1c0af6018454",
+      "actual": "0x788b4ca11950879550353d8ae82d1c0af6018454"
+    },
+    "amount": {
+      "status": "pass",
+      "expected": "10000",
+      "actual": "10000"
+    },
+    "asset": {
+      "status": "pass",
+      "expected": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+      "actual": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"
+    },
+    "payer": {
+      "status": "pass",
+      "expected": "0xd5f3a78ab272eb36a997f4aa249b876bdb9692e3",
+      "actual": "0xd5f3a78ab272eb36a997f4aa249b876bdb9692e3"
+    },
+    "valid_at": {
+      "status": "pass",
+      "expected": 1793245403,
+      "actual": {
+        "validAfter": 1793244799,
+        "validBefore": 1793245699
+      }
+    },
+    "valid_at_block": {
+      "status": "pass",
+      "actual": 1793245403
+    },
+    "authorization_state": {
+      "status": "pass"
+    }
+  },
+  "errors": [],
+  "warnings": [],
+  "rpc_reads": [
+    {
+      "method": "eth_getTransactionByHash",
+      "rpc": "https://mainnet.base.org",
+      "params": [
+        "0x389a08dba01e0d65999b775cd9724d73d82bd3908ae5666ae631ef87e4dfde99"
+      ]
+    },
+    {
+      "method": "eth_getTransactionReceipt",
+      "rpc": "https://mainnet.base.org",
+      "params": [
+        "0x389a08dba01e0d65999b775cd9724d73d82bd3908ae5666ae631ef87e4dfde99"
+      ]
+    },
+    {
+      "method": "eth_getBlockByNumber",
+      "rpc": "https://mainnet.base.org",
+      "params": [
+        "0x32c31fc",
+        false
+      ]
+    },
+    {
+      "method": "eth_call",
+      "rpc": "https://mainnet.base.org",
+      "params": [
+        {
+          "to": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+          "data": "0xe94a0102000000000000000000000000d5f3a78ab272eb36a997f4aa249b876bdb9692e315de8b80a35accc9d1f358c74477d5b9384406d9ce29d1d292665a6e2393e6f5"
+        },
+        {
+          "blockHash": "0xa292d5986f6d6cc9085acb3c2532d9f8bee3ce38fa9d70feb16fcb64b5936505",
+          "requireCanonical": true
+        }
+      ]
+    }
+  ],
+  "scope": "On-chain EIP-3009 settlement evidence; off-chain x402 challenge provenance is not authenticated.",
+  "transaction": {
+    "status": "success",
+    "block_number": 53228028,
+    "block_hash": "0xa292d5986f6d6cc9085acb3c2532d9f8bee3ce38fa9d70feb16fcb64b5936505",
+    "timestamp": 1793245403,
+    "timestamp_utc": "2026-10-29T03:43:23+00:00",
+    "sender": "0x97acce27d5069544480bde0f04d9f47d7422a016",
+    "target": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"
+  },
+  "usdc_transfers": [
+    {
+      "receipt_log_position": 1,
+      "logIndex": "0x32e",
+      "emitter": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+      "topic0": "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+      "from": "0xd5f3a78ab272eb36a997f4aa249b876bdb9692e3",
+      "to": "0x788b4ca11950879550353d8ae82d1c0af6018454",
+      "value": "10000",
+      "amount_usdc": "0.010000"
+    }
+  ],
+  "authorization_events": [
+    {
+      "receipt_log_position": 0,
+      "logIndex": "0x32d",
+      "emitter": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+      "topic0": "0x98de503528ee59b575ef0c0a2576a82497bfc029a5685b209e9ec333479b10a5",
+      "authorizer": "0xd5f3a78ab272eb36a997f4aa249b876bdb9692e3",
+      "nonce": "0x15de8b80a35accc9d1f358c74477d5b9384406d9ce29d1d292665a6e2393e6f5"
+    }
+  ],
+  "canceled_authorizations": [],
+  "decoded_calls": [
+    {
+      "kind": "transferWithAuthorization",
+      "selector": "0xe3ee160e",
+      "from": "0xd5f3a78ab272eb36a997f4aa249b876bdb9692e3",
+      "to": "0x788b4ca11950879550353d8ae82d1c0af6018454",
+      "value": "10000",
+      "validAfter": 1793244799,
+      "validBefore": 1793245699,
+      "nonce": "0x15de8b80a35accc9d1f358c74477d5b9384406d9ce29d1d292665a6e2393e6f5",
+      "abi_bytes": 292,
+      "trailing": {
+        "raw": "0xa161776a6364705f666163696c31000e0280218021802180218021802180218021",
+        "format": "erc8021",
+        "schema_id": 2,
+        "codes": [
+          "cdp_facil1"
+        ],
+        "fields": {
+          "w": "cdp_facil1"
+        }
+      },
+      "target": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+      "path": [],
+      "detection": "direct"
+    }
+  ],
+  "trailing_calldata": {
+    "raw": "0xa161776a6364705f666163696c31000e0280218021802180218021802180218021",
+    "format": "erc8021",
+    "schema_id": 2,
+    "codes": [
+      "cdp_facil1"
+    ],
+    "fields": {
+      "w": "cdp_facil1"
+    }
+  },
+  "selected": {
+    "transfer": {
+      "receipt_log_position": 1,
+      "logIndex": "0x32e",
+      "emitter": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+      "topic0": "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+      "from": "0xd5f3a78ab272eb36a997f4aa249b876bdb9692e3",
+      "to": "0x788b4ca11950879550353d8ae82d1c0af6018454",
+      "value": "10000",
+      "amount_usdc": "0.010000"
+    },
+    "event": {
+      "receipt_log_position": 0,
+      "logIndex": "0x32d",
+      "emitter": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+      "topic0": "0x98de503528ee59b575ef0c0a2576a82497bfc029a5685b209e9ec333479b10a5",
+      "authorizer": "0xd5f3a78ab272eb36a997f4aa249b876bdb9692e3",
+      "nonce": "0x15de8b80a35accc9d1f358c74477d5b9384406d9ce29d1d292665a6e2393e6f5"
+    },
+    "call": {
+      "kind": "transferWithAuthorization",
+      "selector": "0xe3ee160e",
+      "from": "0xd5f3a78ab272eb36a997f4aa249b876bdb9692e3",
+      "to": "0x788b4ca11950879550353d8ae82d1c0af6018454",
+      "value": "10000",
+      "validAfter": 1793244799,
+      "validBefore": 1793245699,
+      "nonce": "0x15de8b80a35accc9d1f358c74477d5b9384406d9ce29d1d292665a6e2393e6f5",
+      "abi_bytes": 292,
+      "trailing": {
+        "raw": "0xa161776a6364705f666163696c31000e0280218021802180218021802180218021",
+        "format": "erc8021",
+        "schema_id": 2,
+        "codes": [
+          "cdp_facil1"
+        ],
+        "fields": {
+          "w": "cdp_facil1"
+        }
+      },
+      "target": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+      "path": [],
+      "detection": "direct"
+    },
+    "evidence": "calldata_and_receipt",
+    "checks": {
+      "pay_to": {
+        "status": "pass",
+        "expected": "0x788b4ca11950879550353d8ae82d1c0af6018454",
+        "actual": "0x788b4ca11950879550353d8ae82d1c0af6018454"
+      },
+      "amount": {
+        "status": "pass",
+        "expected": "10000",
+        "actual": "10000"
+      },
+      "asset": {
+        "status": "pass",
+        "expected": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+        "actual": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"
+      },
+      "payer": {
+        "status": "pass",
+        "expected": "0xd5f3a78ab272eb36a997f4aa249b876bdb9692e3",
+        "actual": "0xd5f3a78ab272eb36a997f4aa249b876bdb9692e3"
+      },
+      "valid_at": {
+        "status": "pass",
+        "expected": 1793245403,
+        "actual": {
+          "validAfter": 1793244799,
+          "validBefore": 1793245699
+        }
+      },
+      "valid_at_block": {
+        "status": "pass",
+        "actual": 1793245403
+      },
+      "authorization_state": {
+        "status": "pass"
+      }
+    }
+  },
+  "authorization_state": {
+    "authorizer": "0xd5f3a78ab272eb36a997f4aa249b876bdb9692e3",
+    "nonce": "0x15de8b80a35accc9d1f358c74477d5b9384406d9ce29d1d292665a6e2393e6f5",
+    "used_or_canceled": true,
+    "block_number": 53228028,
+    "block_hash": "0xa292d5986f6d6cc9085acb3c2532d9f8bee3ce38fa9d70feb16fcb64b5936505",
+    "rpc": "https://mainnet.base.org",
+    "eth_call": [
+      {
+        "to": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+        "data": "0xe94a0102000000000000000000000000d5f3a78ab272eb36a997f4aa249b876bdb9692e315de8b80a35accc9d1f358c74477d5b9384406d9ce29d1d292665a6e2393e6f5"
+      },
+      {
+        "blockHash": "0xa292d5986f6d6cc9085acb3c2532d9f8bee3ce38fa9d70feb16fcb64b5936505",
+        "requireCanonical": true
+      }
+    ]
+  },
+  "example_request": {
+    "tx_hash": "0x389a08dba01e0d65999b775cd9724d73d82bd3908ae5666ae631ef87e4dfde99",
+    "expected": {
+      "pay_to": "0x788b4ca11950879550353d8ae82d1c0af6018454",
+      "payer": "0xd5f3a78ab272eb36a997f4aa249b876bdb9692e3",
+      "amount": "10000",
+      "valid_at": 1793245403,
+      "asset": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"
+    }
+  },
+  "computed_at": "2026-10-30T11:31:01.307635+00:00"
+}

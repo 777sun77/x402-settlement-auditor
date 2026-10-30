@@ -1,0 +1,4 @@
+data/payments.db
+data/locks/
+logs/
+__pycache__/
