@@ -6,16 +6,14 @@ import server
 import payments
 
 BASE = server.config_base()
-EXAMPLE = {'block_number': 53228028, 'tx_index': 242}
+EXAMPLE = {'tx_hash': '0x389a08dba01e0d65999b775cd9724d73d82bd3908ae5666ae631ef87e4dfde99'}
 INPUT = {
     'type': 'object',
     'properties': {
         'tx_hash': {'type': 'string', 'pattern': '^0x[0-9a-fA-F]{64}$'},
-        'block_number': {'type': 'integer', 'minimum': 0},
-        'tx_index': {'type': 'integer', 'minimum': 0},
         'expected': {'type': 'object', 'description': 'Optional expected payment fields; see /guide.'},
     },
-    'oneOf': [{'required': ['tx_hash']}, {'required': ['block_number', 'tx_index']}],
+    'required': ['tx_hash'],
     'additionalProperties': False,
 }
 DESCRIPTION = ('Inspect a Base native-USDC EIP-3009 settlement: decode authorization calls, '
@@ -88,6 +86,16 @@ OriginalHandler = server.Handler
 
 
 class Handler(OriginalHandler):
+    def do_POST(self):
+        if (self.path == '/v1/audit'
+                and not self.headers.get_all('PAYMENT-SIGNATURE')
+                and not self.headers.get_all('X-PAYMENT')
+                and not self.headers.get('Transfer-Encoding')
+                and self.headers.get('Content-Length', '0') == '0'):
+            body = discoverable_challenge(BASE)
+            return self.reply(402, body, {'PAYMENT-REQUIRED': payments.b64(body)})
+        return super().do_POST()
+
     def do_GET(self):
         if self.path == '/openapi.json':
             return self.reply(200, OPENAPI)
