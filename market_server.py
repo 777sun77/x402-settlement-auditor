@@ -22,6 +22,19 @@ DESCRIPTION = ('Inspect a Base native-USDC EIP-3009 settlement: decode authoriza
                'bind receipt logs, check historical nonce state and compare expected terms. '
                'Informational evidence, not proof of delivery or a security guarantee. '
                '0.01 USDC on Base per call. POST JSON; see /guide and /example.')
+original_terms = server.terms
+
+
+def terms():
+    result = original_terms().replace('contact@speedbot.dev', 'sihu.shop@mail.grokbot.com')
+    return result.replace('</main>',
+        '<p>Hosting: free Render instance. The service can sleep or restart. Local payment '
+        'results are ephemeral and may be lost on a restart or redeploy, including before '
+        'the 30-day retention limit. Save your original authorization and receipt. '
+        'Do not sign a second payment just to retry.</p></main>')
+
+
+server.terms = terms
 OPENAPI = {
     'openapi': '3.1.0',
     'info': {'title': 'Charlie Base USDC Settlement Auditor', 'version': '1.1.0-market',
