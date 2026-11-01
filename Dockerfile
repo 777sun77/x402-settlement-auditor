@@ -7,4 +7,4 @@ RUN mkdir -p /app/data /app/logs && chown -R user /app
 USER user
 ENV BIND_HOST=0.0.0.0 PORT=7860 PAYMENTS_DB=/app/data/payments.db
 EXPOSE 7860
-CMD ["python3", "-u", "server.py"]
+CMD ["python3", "-u", "market_server.py"]
