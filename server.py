@@ -36,6 +36,73 @@ def fingerprint():
     return {'version': VERSION, 'git_sha': sha, 'server_sha256': checksums['server.py'], 'code_sha256': checksums}
 
 
+def openapi_document():
+    amount = f'{int(PRICE) / 1_000_000:.6f}'
+    request_schema = {
+        'type': 'object',
+        'properties': {
+            'tx_hash': {'type': 'string', 'pattern': '^0x[0-9a-fA-F]{64}$', 'description': 'Base transaction hash.'},
+            'block_number': {'type': 'integer', 'minimum': 0},
+            'tx_index': {'type': 'integer', 'minimum': 0, 'description': 'Zero-based transaction index within the block.'},
+            'expected': {
+                'type': 'object',
+                'properties': {
+                    'pay_to': {'type': 'string', 'description': 'Expected USDC recipient address.'},
+                    'payer': {'type': 'string', 'description': 'Expected authorizer address.'},
+                    'amount': {'type': 'string', 'pattern': '^(0|[1-9][0-9]*)$', 'description': 'Expected USDC amount in atomic units.'},
+                    'asset': {'type': 'string', 'description': 'Expected token address; defaults to Base native USDC.'},
+                    'valid_at': {'type': 'integer', 'minimum': 0, 'description': 'Unix second at which the authorization must be valid.'}
+                },
+                'additionalProperties': False
+            }
+        },
+        'oneOf': [
+            {'required': ['tx_hash'], 'not': {'anyOf': [{'required': ['block_number']}, {'required': ['tx_index']}] }},
+            {'required': ['block_number', 'tx_index'], 'not': {'required': ['tx_hash']}}
+        ],
+        'additionalProperties': False
+    }
+    audit_schema = {'type': 'object', 'description': 'Settlement audit result. See /guide for field meanings.',
+                    'properties': {'verdict': {'type': ['string', 'null']}, 'partial': {'type': 'boolean'},
+                                   'checks': {'type': 'object'}, 'transaction': {'type': 'object'},
+                                   'errors': {'type': 'array', 'items': {'type': 'string'}}},
+                    'additionalProperties': True}
+    return {
+        'openapi': '3.1.0',
+        'info': {
+            'title': 'x402 Settlement Auditor', 'version': VERSION,
+            'description': 'Independent evidence checks for alleged Base USDC x402 settlements.',
+            'x-guidance': 'Use POST /v1/audit to inspect a Base transaction hash or block number and transaction index. Send application/json with exactly one identifier form and optional expected fields. The service returns HTTP 402 with an x402 v2 challenge before validating any unauthenticated request body. Pay 0.01 USD in Base native USDC, then retry the same request with PAYMENT-SIGNATURE. Read /guide for the complete contract and limitations.',
+            'contact': {'email': 'sihu.shop@mail.grokbot.com'}
+        },
+        'paths': {
+            '/v1/audit': {
+                'post': {
+                    'operationId': 'auditSettlement',
+                    'summary': 'Audit an alleged Base x402 USDC settlement',
+                    'description': 'Checks on-chain authorization and settlement evidence against optional expected values.',
+                    'x-payment-info': {'price': {'mode': 'fixed', 'currency': 'USD', 'amount': amount}, 'protocols': [{'x402': {}}]},
+                    'requestBody': {'required': True, 'content': {'application/json': {'schema': request_schema}},
+                                    'description': 'Identify a transaction by tx_hash or by block_number and tx_index.'},
+                    'responses': {
+                        '200': {'description': 'Audit completed, including determinate negative findings or partial results.',
+                                'content': {'application/json': {'schema': audit_schema}}},
+                        '402': {'description': 'Payment required. The body and PAYMENT-REQUIRED header contain the x402 v2 challenge.',
+                                'content': {'application/json': {'schema': {'type': 'object', 'properties': {
+                                    'x402Version': {'const': 2}, 'error': {'type': 'string'},
+                                    'resource': {'type': 'object'}, 'accepts': {'type': 'array', 'items': {'type': 'object'}}
+                                }, 'required': ['x402Version', 'resource', 'accepts']}}}}
+                    }
+                }
+            },
+            '/guide': {'get': {'operationId': 'integrationGuide', 'security': [], 'summary': 'Read the integration guide',
+                               'responses': {'200': {'description': 'Human-readable API guide'}}}},
+            '/health': {'get': {'operationId': 'healthCheck', 'security': [], 'summary': 'Check service health',
+                                'responses': {'200': {'description': 'Service health and current payment configuration'}}}}
+        }
+    }
+
+
 def page(title, content):
     return '''<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>'''+html.escape(title)+''' · x402 Settlement Auditor</title><style>
@@ -95,13 +162,29 @@ class Handler(BaseHTTPRequestHandler):
         try: self.wfile.write(body)
         except (BrokenPipeError, ConnectionResetError): pass
 
+    def reply_asset(self, status, body, content_type):
+        self.send_response(status)
+        self.send_header('Content-Type', content_type)
+        self.send_header('Content-Length', str(len(body)))
+        self.send_header('Cache-Control', 'public, max-age=86400')
+        self.send_header('X-Content-Type-Options', 'nosniff')
+        self.end_headers()
+        try: self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError): pass
+
     def do_GET(self):
         try:
-            if self.path == '/': self.reply(200, home(), is_html=True)
+            path = self.path.split('?')[0]
+            if path == '/favicon.ico':
+                # Minimal valid one-pixel ICO (opaque mint) so discovery clients get a real icon response.
+                self.reply_asset(200, bytes.fromhex('00000100010001010000010020000400000016000000')+bytes.fromhex('7ce8cfff'), 'image/x-icon')
+            elif path == '/openapi.json': self.reply(200, openapi_document())
+            elif path == '/.well-known/x402': self.reply(200, {'version': 1, 'resources': [self.server.service.base_url+'/v1/audit']})
+            elif path == '/': self.reply(200, home(), is_html=True)
             elif self.path == '/guide': self.reply(200, guide(self.server.service.base_url), is_html=True)
             elif self.path == '/terms': self.reply(200, terms(), is_html=True)
             elif self.path == '/example': self.reply(200, self.server.example)
-            elif self.path.split('?')[0] == '/v1/audit': self.reply(*self.server.service.required())
+            elif path == '/v1/audit': self.reply(*self.server.service.required())
             elif self.path == '/health': self.reply(200, {'ok': True, 'network': NETWORK, 'price': PRICE,
                 'price_usdc': '0.01', 'pay_to': PAY_TO, **self.server.identity,
                 'facilitators': getattr(self.server.service.facilitators, 'support', {})})
@@ -120,9 +203,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         if self.path.split('?')[0] != '/v1/audit': return self.reply(404, {'error': 'not_found'})
         has_pay = self.headers.get('PAYMENT-SIGNATURE') or self.headers.get('X-PAYMENT')
+        if not has_pay: return self.reply(*self.server.service.required())
         cl = self.headers.get('Content-Length')
-        if not has_pay and not self.headers.get('Transfer-Encoding') and (cl is None or cl.strip() == '0'):
-            return self.reply(*self.server.service.required())
         if self.headers.get('Transfer-Encoding') or len(self.headers.get_all('Content-Length', [])) != 1:
             return self.reply(400, {'error': 'one Content-Length is required; chunked input is unsupported'})
         try: size = int(self.headers['Content-Length'])

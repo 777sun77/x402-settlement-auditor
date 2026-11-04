@@ -29,13 +29,24 @@ class HTTPTests(unittest.TestCase):
         r=conn.getresponse();status=r.status;h=dict(r.getheaders());raw=r.read();conn.close()
         return status,h,raw
     def test_free_pages_and_health(self):
-        for path in ['/','/guide','/terms','/example','/health']:
+        for path in ['/','/guide','/terms','/example','/health','/openapi.json','/.well-known/x402']:
             status,h,raw=self.send('GET',path)
             self.assertEqual(status,200,path);self.assertTrue(raw)
         status,h,raw=self.send('GET','/health');obj=json.loads(raw)
         self.assertEqual(obj['version'],'1.1.0');self.assertEqual(VERSION,'1.1.0')
         self.assertEqual(obj['server_sha256'],hashlib.sha256((ROOT/'server.py').read_bytes()).hexdigest())
         status,h,raw=self.send('GET','/example');self.assertEqual(json.loads(raw)['verdict'],'matches')
+        status,h,raw=self.send('GET','/favicon.ico')
+        self.assertEqual(status,200);self.assertEqual(h['Content-Type'],'image/x-icon')
+        status,h,raw=self.send('GET','/openapi.json');spec=json.loads(raw)
+        self.assertEqual(spec['openapi'],'3.1.0')
+        self.assertEqual(spec['info']['contact']['email'],'sihu.shop@mail.grokbot.com')
+        operation=spec['paths']['/v1/audit']['post']
+        self.assertEqual(operation['x-payment-info']['price']['amount'],'0.010000')
+        self.assertIn('200',operation['responses']);self.assertIn('402',operation['responses'])
+        self.assertIn('requestBody',operation)
+        status,h,raw=self.send('GET','/.well-known/x402')
+        self.assertEqual(json.loads(raw),{'version':1,'resources':[BASE+'/v1/audit']})
     def test_guide_documents_both_forms_and_locator_example(self):
         status,h,raw=self.send('GET','/guide');text=raw.decode()
         self.assertEqual(status,200)
@@ -56,7 +67,15 @@ class HTTPTests(unittest.TestCase):
         self.assertEqual((self.fac.verifies,self.fac.settles),before)
     def test_unpaid_challenge_and_invalid_input_without_charge(self):
         before=self.fac.settles
-        status,h,raw=self.send('POST','/v1/audit',json.dumps(REQUEST),{'Content-Type':'application/json'})
+        for body,headers in [
+            (json.dumps(REQUEST),{'Content-Type':'application/json'}),
+            ('{ definitely not json',{'Content-Type':'application/json'}),
+            ('{}',{'Content-Type':'text/plain'}),
+        ]:
+            status,h,raw=self.send('POST','/v1/audit',body,headers)
+            self.assertEqual(status,402)
+            self.assertEqual(json.loads(raw),json.loads(base64.b64decode(h['PAYMENT-REQUIRED'])))
+        status,h,raw=self.send('GET','/v1/audit')
         self.assertEqual(status,402)
         self.assertEqual(json.loads(raw),json.loads(base64.b64decode(h['PAYMENT-REQUIRED'])))
         status,h,raw=self.send('POST','/v1/audit','{"tx_hash":"bad"}',{'Content-Type':'application/json','PAYMENT-SIGNATURE':b64(payload())})
@@ -71,7 +90,8 @@ class HTTPTests(unittest.TestCase):
         before=self.fac.settles
         for body,ctype,code in [('{"tx_hash":NaN}','application/json',400),('{','application/json',400),
                                  ('{"x":1,"x":2}','application/json',400),('{}','text/plain',415),('x'*32001,'application/json',413)]:
-            self.assertEqual(self.send('POST','/v1/audit',body,{'Content-Type':ctype})[0],code)
+            self.assertEqual(self.send('POST','/v1/audit',body,{'Content-Type':ctype,
+                'PAYMENT-SIGNATURE':b64(payload())})[0],code)
         self.assertEqual(self.fac.settles,before)
 
 if __name__=='__main__':unittest.main()
