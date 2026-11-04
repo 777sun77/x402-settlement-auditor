@@ -101,14 +101,28 @@ class Handler(BaseHTTPRequestHandler):
             elif self.path == '/guide': self.reply(200, guide(self.server.service.base_url), is_html=True)
             elif self.path == '/terms': self.reply(200, terms(), is_html=True)
             elif self.path == '/example': self.reply(200, self.server.example)
+            elif self.path.split('?')[0] == '/v1/audit': self.reply(*self.server.service.required())
             elif self.path == '/health': self.reply(200, {'ok': True, 'network': NETWORK, 'price': PRICE,
                 'price_usdc': '0.01', 'pay_to': PAY_TO, **self.server.identity,
                 'facilitators': getattr(self.server.service.facilitators, 'support', {})})
             else: self.reply(404, {'error': 'not_found'})
         except Exception: self.reply(500, {'error': 'page_unavailable'})
 
+    def do_HEAD(self):
+        if self.path.split('?')[0] != '/v1/audit':
+            self.send_response(404); self.send_header('Content-Length','0'); self.end_headers(); return
+        status, obj, headers = self.server.service.required()
+        self.send_response(status)
+        self.send_header('Content-Type', 'application/json; charset=utf-8')
+        for k, v in headers.items(): self.send_header(k, v)
+        self.send_header('Content-Length', '0'); self.end_headers()
+
     def do_POST(self):
-        if self.path != '/v1/audit': return self.reply(404, {'error': 'not_found'})
+        if self.path.split('?')[0] != '/v1/audit': return self.reply(404, {'error': 'not_found'})
+        has_pay = self.headers.get('PAYMENT-SIGNATURE') or self.headers.get('X-PAYMENT')
+        cl = self.headers.get('Content-Length')
+        if not has_pay and not self.headers.get('Transfer-Encoding') and (cl is None or cl.strip() == '0'):
+            return self.reply(*self.server.service.required())
         if self.headers.get('Transfer-Encoding') or len(self.headers.get_all('Content-Length', [])) != 1:
             return self.reply(400, {'error': 'one Content-Length is required; chunked input is unsupported'})
         try: size = int(self.headers['Content-Length'])
