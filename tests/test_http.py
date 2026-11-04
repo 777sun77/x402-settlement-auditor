@@ -38,6 +38,8 @@ class HTTPTests(unittest.TestCase):
         status,h,raw=self.send('GET','/example');self.assertEqual(json.loads(raw)['verdict'],'matches')
         status,h,raw=self.send('GET','/favicon.ico')
         self.assertEqual(status,200);self.assertEqual(h['Content-Type'],'image/x-icon')
+        status,h,raw=self.send('HEAD','/favicon.ico')
+        self.assertEqual(status,200);self.assertEqual(int(h['Content-Length']),4+22)
         status,h,raw=self.send('GET','/openapi.json');spec=json.loads(raw)
         self.assertEqual(spec['openapi'],'3.1.0')
         self.assertEqual(spec['info']['contact']['email'],'sihu.shop@mail.grokbot.com')

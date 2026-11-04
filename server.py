@@ -192,6 +192,14 @@ class Handler(BaseHTTPRequestHandler):
         except Exception: self.reply(500, {'error': 'page_unavailable'})
 
     def do_HEAD(self):
+        if self.path.split('?')[0] == '/favicon.ico':
+            icon = bytes.fromhex('00000100010001010000010020000400000016000000')+bytes.fromhex('7ce8cfff')
+            self.send_response(200)
+            self.send_header('Content-Type', 'image/x-icon')
+            self.send_header('Content-Length', str(len(icon)))
+            self.send_header('Cache-Control', 'public, max-age=86400')
+            self.end_headers()
+            return
         if self.path.split('?')[0] != '/v1/audit':
             self.send_response(404); self.send_header('Content-Length','0'); self.end_headers(); return
         status, obj, headers = self.server.service.required()
