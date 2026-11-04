@@ -37,7 +37,13 @@ def requirements():
 def challenge(base_url, error='Payment required'):
     return {'x402Version': 2, 'error': error,
             'resource': {'url': base_url+'/v1/audit', 'description': 'Independent Base x402 settlement audit',
-                         'mimeType': 'application/json'}, 'accepts': [requirements()]}
+                         'mimeType': 'application/json'}, 'accepts': [requirements()],
+            'extensions': {'bazaar': {'schema': {'properties': {
+                'input': {'properties': {'body': {'type': 'object', 'description':
+                    'JSON body with tx_hash or block_number and tx_index, plus optional expected settlement fields.'}}},
+                'output': {'properties': {'example': {'type': 'object', 'description':
+                    'Audit verdict, transaction evidence, field checks and partial-result status.'}}}
+            }}}}}
 
 
 def parse_payment(header, base_url):

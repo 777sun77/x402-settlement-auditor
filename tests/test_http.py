@@ -45,6 +45,7 @@ class HTTPTests(unittest.TestCase):
         self.assertEqual(operation['x-payment-info']['price']['amount'],'0.010000')
         self.assertIn('200',operation['responses']);self.assertIn('402',operation['responses'])
         self.assertIn('requestBody',operation)
+        self.assertIn('/favicon.ico',self.send('GET','/')[2].decode())
         status,h,raw=self.send('GET','/.well-known/x402')
         self.assertEqual(json.loads(raw),{'version':1,'resources':[BASE+'/v1/audit']})
     def test_guide_documents_both_forms_and_locator_example(self):
@@ -78,6 +79,7 @@ class HTTPTests(unittest.TestCase):
         status,h,raw=self.send('GET','/v1/audit')
         self.assertEqual(status,402)
         self.assertEqual(json.loads(raw),json.loads(base64.b64decode(h['PAYMENT-REQUIRED'])))
+        self.assertIn('body',json.loads(raw)['extensions']['bazaar']['schema']['properties']['input']['properties'])
         status,h,raw=self.send('POST','/v1/audit','{"tx_hash":"bad"}',{'Content-Type':'application/json','PAYMENT-SIGNATURE':b64(payload())})
         self.assertEqual(status,400);self.assertEqual(self.fac.settles,before)
     def test_legacy_header_paid_delivery_and_replay(self):
